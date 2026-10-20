@@ -35,7 +35,7 @@ const PORT = config.port;
 server.listen(PORT, () => {
   console.log('====================================================');
   console.log(` TorrentFlow Backend Server running on port ${PORT}`);
-  console.log(` Downloads directory: ${config.downloadPath}`);
+  console.log(` Temporary download directory: ${config.temporaryDownloadPath}`);
   console.log(` Max concurrent downloads: ${config.maxActiveTorrents}`);
   console.log(` Frontend origin: ${config.frontendOrigin}`);
   console.log('====================================================');

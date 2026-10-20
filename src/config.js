@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const backendRoot = path.resolve(__dirname, '..');
 const envPath = path.join(backendRoot, '.env');
+let temporaryDirectoryError = null;
 
 if (fs.existsSync(envPath)) {
   dotenv.config({ path: envPath });
@@ -69,6 +70,10 @@ export function validateConfig(isStrict = false) {
     errors.push('B2_RETRY_DELAY_SECONDS must be an integer between 1 and 3600.');
   }
 
+  if (temporaryDirectoryError) {
+    errors.push(`TEMP_DOWNLOAD_PATH is not writable: ${temporaryDirectoryError}`);
+  }
+
   if (errors.length > 0) {
     const errorMsg = [
       '=================================================================',
@@ -107,6 +112,7 @@ try {
     fs.mkdirSync(resolvedTemporaryDownloadPath, { recursive: true });
   }
 } catch (err) {
+  temporaryDirectoryError = err.message;
   console.error(`Failed to create temporary download directory "${resolvedTemporaryDownloadPath}":`, err.message);
 }
 
