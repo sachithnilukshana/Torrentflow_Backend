@@ -1,0 +1,35 @@
+{
+  "name": "torrentflow-backend",
+  "version": "1.0.0",
+  "description": "TorrentFlow Backend with WebTorrent, Express, Socket.IO, Telegram Bot, and GoFile",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test --experimental-test-isolation=process tests/**/*.test.js"
+  },
+  "keywords": [
+    "torrent",
+    "webtorrent",
+    "downloader",
+    "telegram-bot",
+    "gofile"
+  ],
+  "author": "TorrentFlow Team",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "jsonwebtoken": "^9.0.2",
+    "magnet-uri": "^7.0.5",
+    "multer": "^1.4.5-lts.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "socket.io": "^4.8.1",
+    "webtorrent": "^3.0.21"
+  }
+}
+
