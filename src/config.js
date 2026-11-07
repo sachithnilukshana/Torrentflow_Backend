@@ -136,7 +136,7 @@ export const config = {
   temporaryDownloadPath: resolvedTemporaryDownloadPath,
   movieCataloguePath: resolvedMovieCataloguePath,
   maxActiveTorrents: parseInt(process.env.MAX_ACTIVE_TORRENTS || '3', 10),
-  maxConnections: parseInt(process.env.MAX_CONNECTIONS || '250', 10),
+  maxConnections: parseInt(process.env.MAX_CONNECTIONS || '500', 10),
   maxTorrentUploadMb: parseInt(process.env.MAX_TORRENT_UPLOAD_MB || '5', 10),
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.trim() : '',
   telegramAllowedUserIds: parsedTelegramAllowedIds,
@@ -147,11 +147,12 @@ export const config = {
   b2PublicUrlBase: process.env.B2_PUBLIC_URL_BASE ? process.env.B2_PUBLIC_URL_BASE.trim() : '',
   backblazeB2ApiToken: process.env.B2_APPLICATION_KEY ? process.env.B2_APPLICATION_KEY.trim() : '',
   autoUploadToBackblazeB2: String(process.env.AUTO_UPLOAD_TO_BACKBLAZE_B2).toLowerCase() === 'true',
-  backblazeB2UploadMaxAttempts: parseInt(process.env.B2_UPLOAD_MAX_ATTEMPTS || '3', 10),
-  backblazeB2RetryDelayMs: parseInt(process.env.B2_RETRY_DELAY_SECONDS || '15', 10) * 1000,
-  backblazeB2PartSizeBytes: Math.max(5 * 1024 * 1024, parseInt(process.env.B2_PART_SIZE_MIB || '32', 10) * 1024 * 1024),
-  backblazeB2ParallelParts: Math.min(16, Math.max(1, parseInt(process.env.B2_PARALLEL_PARTS || '4', 10))),
+  backblazeB2UploadMaxAttempts: parseInt(process.env.B2_UPLOAD_MAX_ATTEMPTS || '5', 10),
+  backblazeB2RetryDelayMs: parseInt(process.env.B2_RETRY_DELAY_SECONDS || '10', 10) * 1000,
+  backblazeB2PartSizeBytes: Math.max(5 * 1024 * 1024, parseInt(process.env.B2_PART_SIZE_MIB || '64', 10) * 1024 * 1024),
+  backblazeB2ParallelParts: Math.min(16, Math.max(1, parseInt(process.env.B2_PARALLEL_PARTS || '6', 10))),
   deleteTemporaryFilesAfterUpload: String(process.env.DELETE_TEMP_AFTER_B2_UPLOAD || 'true').toLowerCase() !== 'false',
+  b2RetentionDays: parseInt(process.env.B2_RETENTION_DAYS || '2', 10),
   nodeEnv: process.env.NODE_ENV || 'development'
 };
 

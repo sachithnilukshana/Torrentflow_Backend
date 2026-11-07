@@ -1,12 +1,14 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import parseTorrent from 'parse-torrent';
 import magnetURI from 'magnet-uri';
 import config from './config.js';
 import { getWebTorrentClient, destroyWebTorrentClient } from './webtorrent.js';
 import { broadcast } from './socket.js';
 import { BackblazeB2UploadQueue } from './backblazeB2UploadQueue.js';
-import { registerUploadedMovie } from './movieCatalogue.js';
+import { registerUploadedMovie, removeMovieByB2FileId } from './movieCatalogue.js';
+import { cleanupExpiredBackblazeB2Files, syncBucketLifecycleRules } from './backblazeB2.js';
 
 // In-memory registry of all torrent tasks (active, queued, completed, error)
 const torrentRegistry = new Map();
@@ -16,6 +18,7 @@ const downloadQueue = [];
 
 // Shared progress-broadcast timer; initialized once and released on shutdown.
 let progressInterval = null;
+let b2CleanupInterval = null;
 
 // The environment value is the first-run default. The dashboard setting is
 // persisted with torrent metadata so an explicit user choice survives restarts.
@@ -177,6 +180,8 @@ function savePersistedMeta() {
           completedAt: t.completedAt,
           addedAt: t.addedAt,
           files: t.files,
+          accessKey: t.accessKey || null,
+          telegramUser: t.telegramUser || null,
           backblazeB2Url: t.backblazeB2Url || null,
           backblazeB2Uploads: (t.backblazeB2Uploads || []).map(({ _lastProgressBroadcastAt, ...upload }) => upload)
         };
@@ -249,7 +254,9 @@ function startTorrentEngine(task) {
     // not permanent storage; verified B2 uploads are removed afterwards.
     path: config.temporaryDownloadPath,
     destroyStoreOnDestroy: false,
-    announce: mergedAnnounce
+    announce: mergedAnnounce,
+    maxWebConns: 8,
+    maxConns: config.maxConnections || 500
   };
 
   try {
@@ -435,7 +442,20 @@ function queueBackblazeB2Upload(task, upload, { manual = false } = {}) {
       });
       upload.statusMessage = 'Upload complete';
       task.backblazeB2Url ||= result.url;
-      try { registerUploadedMovie({ filename: upload.filename, size: upload.size, b2FileId: result.id, objectKey: result.objectKey, torrentName: task.name, infoHash: task.infoHash }); } catch (error) { console.error('[TorrentManager] Could not register uploaded movie:', error.message); }
+      task.accessKey ||= ('TF-' + crypto.randomBytes(6).toString('hex').toUpperCase());
+      upload.accessKey = task.accessKey;
+      try {
+        registerUploadedMovie({
+          filename: upload.filename,
+          size: upload.size,
+          b2FileId: result.id,
+          objectKey: result.objectKey,
+          torrentName: task.name,
+          infoHash: task.infoHash,
+          telegramUser: task.telegramUser || null,
+          accessKey: task.accessKey
+        });
+      } catch (error) { console.error('[TorrentManager] Could not register uploaded movie:', error.message); }
       savePersistedMeta();
       broadcastSnapshot();
       broadcast('upload:completed', {
@@ -476,12 +496,61 @@ function queueBackblazeB2Upload(task, upload, { manual = false } = {}) {
 async function cleanupVerifiedTemporaryFile(task, upload, targetPath) {
   if (!config.deleteTemporaryFilesAfterUpload) return;
   try {
-    // uploadFileToBackblazeB2 verifies the remote object's length before this
-    // callback is reached. Remove only this exact regular file.
-    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
-      fs.unlinkSync(targetPath);
+    // If all uploads for this task are completed or finishing,
+    // detach and destroy the WebTorrent engine so file locks are released on Windows.
+    const allDone = (task.backblazeB2Uploads || []).every(
+      (u) => u.status === 'completed' || u.filePath === upload.filePath
+    );
+    if (allDone && task._engine) {
+      try {
+        const client = getWebTorrentClient();
+        await new Promise((resolve) => {
+          client.remove(task._engine, { destroyStore: false }, () => resolve());
+        });
+      } catch (_) {}
+      task._engine = null;
+    }
+
+    // On Windows, file handles may need a brief interval to be fully closed
+    let removed = false;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        if (!fs.existsSync(targetPath)) {
+          removed = true;
+          break;
+        }
+        if (fs.statSync(targetPath).isFile()) {
+          fs.unlinkSync(targetPath);
+          removed = true;
+          break;
+        }
+      } catch (err) {
+        if (attempt < 5) {
+          await new Promise((res) => setTimeout(res, 200 * attempt));
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (removed) {
       upload.localFileRemovedAt = new Date().toISOString();
       upload.statusMessage = 'Upload complete (temporary file removed)';
+      console.log(`[TorrentManager] Successfully removed local file from disk after B2 upload: ${upload.filename}`);
+
+      // Check if parent directory inside temp-downloads is now empty
+      try {
+        const parentDir = path.dirname(targetPath);
+        const tempBase = path.resolve(config.temporaryDownloadPath);
+        if (parentDir !== tempBase && parentDir.startsWith(tempBase)) {
+          const remaining = fs.readdirSync(parentDir);
+          if (remaining.length === 0) {
+            fs.rmSync(parentDir, { recursive: true, force: true });
+            console.log(`[TorrentManager] Cleaned up empty directory: ${path.basename(parentDir)}`);
+          }
+        }
+      } catch (_) {}
+
       savePersistedMeta();
       broadcastSnapshot();
     }
@@ -585,7 +654,9 @@ export function formatTorrentOutput(task) {
       name: f.name,
       path: f.path || f.name,
       length: f.length || 0
-    }))
+    })),
+    accessKey: task.accessKey || null,
+    telegramUser: task.telegramUser || null
   };
 }
 
@@ -629,6 +700,38 @@ function broadcastSnapshot() {
 }
 
 /**
+ * Scans Backblaze B2 and removes files older than retention period (default: 2 days),
+ * updating catalogue and metadata accordingly.
+ */
+export async function runBackblazeB2Cleanup() {
+  if (!config.b2BucketId || !config.b2ApplicationKey) return { deletedCount: 0 };
+  try {
+    const result = await cleanupExpiredBackblazeB2Files({
+      retentionDays: config.b2RetentionDays || 2
+    });
+    if (result.deletedFiles && result.deletedFiles.length > 0) {
+      for (const del of result.deletedFiles) {
+        removeMovieByB2FileId(del.fileId);
+        for (const task of torrentRegistry.values()) {
+          for (const u of task.backblazeB2Uploads || []) {
+            if (u.id === del.fileId || u.objectKey === del.fileName) {
+              u.statusMessage = 'File expired and removed from Backblaze B2 (2-day retention)';
+              u.expiredAt = new Date().toISOString();
+            }
+          }
+        }
+      }
+      savePersistedMeta();
+      broadcastSnapshot();
+    }
+    return result;
+  } catch (err) {
+    console.warn('[TorrentManager] Backblaze B2 expiration cleanup error:', err.message);
+    return { deletedCount: 0, error: err.message };
+  }
+}
+
+/**
  * Initializes the TorrentManager, loads persisted metadata, and starts the progress timer.
  */
 export function initTorrentManager() {
@@ -641,9 +744,39 @@ export function initTorrentManager() {
     progressInterval = setInterval(tick, 1000);
   }
 
+  // Wipe any orphaned local files for completed B2 uploads from disk
+  if (config.deleteTemporaryFilesAfterUpload) {
+    for (const task of torrentRegistry.values()) {
+      for (const upload of task.backblazeB2Uploads || []) {
+        if (upload.status === 'completed') {
+          const targetPath = path.join(config.temporaryDownloadPath, upload.filePath);
+          if (fs.existsSync(targetPath)) {
+            try {
+              fs.unlinkSync(targetPath);
+              console.log(`[TorrentManager] Cleaned up stale local file for completed upload: ${upload.filename}`);
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  }
+
   if (canAutoUpload()) {
     for (const task of torrentRegistry.values()) {
       queuePendingUploadsForTask(task);
+    }
+  }
+
+  // Initialize Backblaze B2 2-day retention: sync bucket rule + run cleanup
+  if (config.b2BucketId && config.b2ApplicationKey) {
+    void syncBucketLifecycleRules(config.b2RetentionDays || 2);
+    void runBackblazeB2Cleanup();
+
+    if (!b2CleanupInterval) {
+      // Run expiration scan every hour
+      b2CleanupInterval = setInterval(() => {
+        void runBackblazeB2Cleanup();
+      }, 60 * 60 * 1000);
     }
   }
 }
@@ -731,7 +864,7 @@ export function retryBackblazeB2Upload(infoHash, filePath = null) {
 /**
  * Adds a torrent from a Magnet URI.
  */
-export function addTorrentFromMagnet(rawMagnetUri) {
+export function addTorrentFromMagnet(rawMagnetUri, options = {}) {
   if (!rawMagnetUri || typeof rawMagnetUri !== 'string') {
     throw new Error('A valid magnet URI string is required');
   }
@@ -770,7 +903,9 @@ export function addTorrentFromMagnet(rawMagnetUri) {
     completedAt: null,
     errorMessage: null,
     files: [],
-    _engine: null
+    _engine: null,
+    telegramUser: options.telegramUser || null,
+    accessKey: options.accessKey || ('TF-' + crypto.randomBytes(6).toString('hex').toUpperCase())
   };
 
   torrentRegistry.set(hash, task);
@@ -785,7 +920,7 @@ export function addTorrentFromMagnet(rawMagnetUri) {
 /**
  * Adds a torrent from a .torrent file Buffer.
  */
-export async function addTorrentFromFile(fileBuffer, originalFilename = 'upload.torrent') {
+export async function addTorrentFromFile(fileBuffer, originalFilename = 'upload.torrent', options = {}) {
   if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
     throw new Error('A valid .torrent file Buffer is required');
   }
@@ -828,7 +963,9 @@ export async function addTorrentFromFile(fileBuffer, originalFilename = 'upload.
       path: f.path,
       length: f.length
     })),
-    _engine: null
+    _engine: null,
+    telegramUser: options.telegramUser || null,
+    accessKey: options.accessKey || ('TF-' + crypto.randomBytes(6).toString('hex').toUpperCase())
   };
 
   torrentRegistry.set(hash, task);
@@ -991,13 +1128,15 @@ export async function removeTorrent(infoHash, options = { deleteFiles: false }) 
   // If deleteFiles was requested and engine didn't delete them
   if (options.deleteFiles && task.files && task.files.length > 0) {
     for (const file of task.files) {
-      try {
-        const fullPath = path.join(config.downloadPath, file.path || file.name);
-        if (fs.existsSync(fullPath)) {
-          fs.rmSync(fullPath, { recursive: true, force: true });
+      for (const basePath of [config.temporaryDownloadPath, config.downloadPath]) {
+        try {
+          const fullPath = path.join(basePath, file.path || file.name);
+          if (fs.existsSync(fullPath)) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+          }
+        } catch (rmErr) {
+          console.warn(`[TorrentManager] Could not delete downloaded file "${file.name}":`, rmErr.message);
         }
-      } catch (rmErr) {
-        console.warn(`[TorrentManager] Could not delete downloaded file "${file.name}":`, rmErr.message);
       }
     }
   }
@@ -1139,6 +1278,10 @@ export async function shutdownTorrentManager() {
     clearInterval(progressInterval);
     progressInterval = null;
   }
+  if (b2CleanupInterval) {
+    clearInterval(b2CleanupInterval);
+    b2CleanupInterval = null;
+  }
   // Test/API hosts can import the manager without initialization. Never let
   // that isolated registry overwrite persisted desktop download metadata.
   if (metadataLoaded) {
@@ -1149,6 +1292,7 @@ export async function shutdownTorrentManager() {
 
 export default {
   initTorrentManager,
+  runBackblazeB2Cleanup,
   addTorrentFromMagnet,
   addTorrentFromFile,
   pauseTorrent,

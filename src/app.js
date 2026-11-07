@@ -9,8 +9,8 @@ import { verifyAdminCredentials, generateToken } from './auth.js';
 import requireAuth from './middleware/requireAuth.js';
 import errorHandler, { notFoundHandler } from './middleware/errorHandler.js';
 import torrentManager from './torrentManager.js';
-import { uploadFileToBackblazeB2, downloadBackblazeB2File } from './backblazeB2.js';
-import { findMovieByInfoHash, getMovie, getPlaybackMovie, listMovies, registerUploadedMovie, updateMovieMetadata } from './movieCatalogue.js';
+import { uploadFileToBackblazeB2, downloadBackblazeB2File, authorize, getAuthorizedDownloadUrl } from './backblazeB2.js';
+import { findMovieByInfoHash, findMovieByAccessKey, getMovie, getPlaybackMovie, listMovies, registerUploadedMovie, updateMovieMetadata } from './movieCatalogue.js';
 import { notifyBackblazeB2Upload } from './telegramBot.js';
 import { broadcast } from './socket.js';
 
@@ -126,6 +126,52 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Public Movie Access via Hash / Unique Access Key (No login required)
+app.get('/api/public/watch/:accessKey', async (req, res) => {
+  const { accessKey } = req.params;
+  const movie = findMovieByAccessKey(accessKey);
+  if (!movie) {
+    return res.status(404).json({
+      success: false,
+      error: 'Invalid or expired Movie Access Key. Please check the key provided in Telegram.'
+    });
+  }
+
+  // Generate 12-hour signed playback token
+  const token = jwt.sign(
+    { purpose: 'movie-playback', movieId: movie.id, accessKey: movie.accessKey },
+    config.jwtSecret,
+    { expiresIn: '12h' }
+  );
+
+  let directUrl = null;
+  if (movie.objectKey) {
+    try {
+      const auth = await authorize();
+      directUrl = await getAuthorizedDownloadUrl(auth, movie.objectKey);
+    } catch (_) {}
+  }
+
+  return res.json({
+    success: true,
+    movie: {
+      id: movie.id,
+      title: movie.title,
+      filename: movie.filename,
+      size: movie.size,
+      accessKey: movie.accessKey,
+      uploadedBy: movie.uploadedBy || { displayName: 'Telegram User' },
+      uploadedAt: movie.createdAt || movie.updatedAt,
+      directUrl,
+      source: {
+        src: `/api/movies/${encodeURIComponent(movie.id)}/stream?token=${encodeURIComponent(token)}`,
+        type: 'auto'
+      },
+      subtitles: Array.isArray(movie.subtitles) ? movie.subtitles : []
+    }
+  });
 });
 
 /* =========================================================================
@@ -449,6 +495,19 @@ app.post('/api/backblazeB2/upload', requireAuth, async (req, res, next) => {
       { filename: result.filename, url: result.url }
     );
 
+    // Clean up local disk file after confirmed B2 upload
+    if (config.deleteTemporaryFilesAfterUpload) {
+      try {
+        const fullPath = path.resolve(config.temporaryDownloadPath, targetFilePath);
+        if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+          fs.unlinkSync(fullPath);
+          console.log(`[Backblaze B2] Cleaned up temporary local file after manual upload: ${targetFilePath}`);
+        }
+      } catch (cleanupErr) {
+        console.warn(`[Backblaze B2] Notice on post-upload cleanup: ${cleanupErr.message}`);
+      }
+    }
+
     res.json({
       success: true,
       message: 'File successfully uploaded to Backblaze B2.',
@@ -464,6 +523,20 @@ app.post('/api/backblazeB2/upload', requireAuth, async (req, res, next) => {
       success: false,
       error: err.message
     });
+  }
+});
+
+// Trigger Backblaze B2 expiration cleanup on demand (removes files older than 2 days)
+app.post('/api/backblazeB2/cleanup', requireAuth, async (req, res, next) => {
+  try {
+    const result = await torrentManager.runBackblazeB2Cleanup();
+    res.json({
+      success: true,
+      message: `Backblaze B2 cleanup complete. Removed ${result.deletedCount || 0} expired file(s).`,
+      result
+    });
+  } catch (err) {
+    next(err);
   }
 });
 

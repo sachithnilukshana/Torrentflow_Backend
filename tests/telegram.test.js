@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isUserAllowed, notifyBackblazeB2Upload } from '../src/telegramBot.js';
+import { isUserAllowed, notifyBackblazeB2Upload, formatLiveProgressMessage } from '../src/telegramBot.js';
 import config from '../src/config.js';
 
 describe('Telegram Bot Security Tests', () => {
@@ -47,7 +47,11 @@ describe('Telegram Bot Security Tests', () => {
       assert.equal(delivered, true);
       const delivery = calls.find(([userId]) => userId === testId);
       assert.ok(delivery, 'Expected the allowed Telegram user to receive the link');
-      assert.ok(delivery[1].includes('finished\\-file\\.mkv'));
+      assert.ok(delivery[1].includes('finished-file.mkv'));
+      assert.ok(delivery[1].includes('🎉 *Download Completed!*'), 'Expected "🎉 Download Completed!" header');
+      assert.ok(delivery[1].includes('Movie Access Key'), 'Expected Movie Access Key in Telegram delivery');
+      assert.ok(delivery[1].includes('Watch on Website'), 'Expected website watch link');
+      assert.ok(delivery[1].includes('Stored on Backblaze B2 for 2 days'));
       assert.match(delivery[1], /https:\/\/f000\.backblazeb2\.com\/file\/example-bucket\/finished-file\.mkv/);
 
       const invalidDelivered = await notifyBackblazeB2Upload(
@@ -60,6 +64,28 @@ describe('Telegram Bot Security Tests', () => {
       const idx = config.telegramAllowedUserIds.indexOf(testId);
       if (idx !== -1) config.telegramAllowedUserIds.splice(idx, 1);
     }
+  });
+
+  test('formatLiveProgressMessage formats downloading status with progress bar', () => {
+    const mockTorrent = {
+      name: 'Sample.Movie.2026.mkv',
+      infoHash: 'abcdef1234567890abcdef1234567890abcdef12',
+      status: 'downloading',
+      progress: 0.65,
+      progressPercent: 65,
+      downloadedSize: 650000000,
+      totalSize: 1000000000,
+      downloadSpeed: 10485760, // 10 MB/s
+      uploadSpeed: 524288,
+      peers: 42
+    };
+
+    const formatted = formatLiveProgressMessage(mockTorrent);
+    assert.match(formatted, /Downloading Torrent/);
+    assert.match(formatted, /65%/);
+    assert.match(formatted, /█+/); // Visual progress bar
+    assert.match(formatted, /\*Peers:\* 42/);
+    assert.match(formatted, /\*ETA:\*/);
   });
 });
 

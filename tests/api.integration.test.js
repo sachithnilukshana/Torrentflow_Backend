@@ -4,6 +4,7 @@ import http from 'http';
 import app from '../src/app.js';
 import config from '../src/config.js';
 import { shutdownTorrentManager } from '../src/torrentManager.js';
+import { registerUploadedMovie, removeMovieByB2FileId } from '../src/movieCatalogue.js';
 
 describe('HTTP API End-to-End Integration Tests', () => {
   let server;
@@ -101,6 +102,52 @@ describe('HTTP API End-to-End Integration Tests', () => {
     assert.equal(missing.status, 404);
   });
 
+  test('registerUploadedMovie and removeMovieByB2FileId manage catalogue lifecycle', () => {
+    const registered = registerUploadedMovie({
+      filename: 'sample-lifecycle-movie.mkv',
+      size: 1024,
+      b2FileId: 'mock-file-id-12345',
+      objectKey: 'torrentflow/sample-lifecycle-movie.mkv'
+    });
+    assert.equal(registered.filename, 'sample-lifecycle-movie.mkv');
+    const removed = removeMovieByB2FileId('mock-file-id-12345');
+    assert.equal(removed, true);
+    assert.equal(removeMovieByB2FileId('mock-file-id-12345'), false);
+  });
+
+  test('GET /api/public/watch/:accessKey returns 404 on invalid key and 200 with movie + uploader on valid key', async () => {
+    const invalid = await fetch(`${baseUrl}/api/public/watch/INVALID-KEY-9999`);
+    assert.equal(invalid.status, 404);
+    const invalidData = await invalid.json();
+    assert.equal(invalidData.success, false);
+
+    // Register a test movie with an access key and Telegram uploader
+    const testKey = 'TF-TEST9999ABCD';
+    registerUploadedMovie({
+      filename: 'public-watch-movie.mkv',
+      size: 5242880,
+      b2FileId: 'mock-public-watch-b2-id',
+      objectKey: 'torrentflow/public-watch-movie.mkv',
+      accessKey: testKey,
+      telegramUser: {
+        id: 12345678,
+        username: 'cinephile_test',
+        displayName: '@cinephile_test'
+      }
+    });
+
+    const res = await fetch(`${baseUrl}/api/public/watch/${testKey}`);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.success, true);
+    assert.equal(data.movie.accessKey, testKey);
+    assert.equal(data.movie.uploadedBy.displayName, '@cinephile_test');
+    assert.ok(data.movie.source.src.includes('/stream?token='));
+
+    // Cleanup
+    removeMovieByB2FileId('mock-public-watch-b2-id');
+  });
+
   test('hash lookup validates v1 info hashes and returns not-found safely', async () => {
     const headers = { Authorization: `Bearer ${validToken}` };
     const invalid = await fetch(`${baseUrl}/api/movies/by-hash/not-a-hash`, { headers });
@@ -152,6 +199,20 @@ describe('HTTP API End-to-End Integration Tests', () => {
     const data = await res.json();
     assert.equal(data.success, false);
     assert.match(data.error, /escapes the configured temporary directory/i);
+  });
+
+  test('POST /api/backblazeB2/cleanup requires auth and returns 200 with result', async () => {
+    const unauth = await fetch(`${baseUrl}/api/backblazeB2/cleanup`, { method: 'POST' });
+    assert.equal(unauth.status, 401);
+
+    const res = await fetch(`${baseUrl}/api/backblazeB2/cleanup`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${validToken}` }
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.success, true);
+    assert.ok(typeof data.result?.deletedCount === 'number');
   });
 });
 

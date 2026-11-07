@@ -10,13 +10,14 @@ let clientInstance = null;
 export function getWebTorrentClient() {
   if (!clientInstance) {
     clientInstance = new WebTorrent({
-      maxConns: config.maxConnections || 250,
+      maxConns: config.maxConnections || 500,
       dht: {
         bootstrap: [
           'router.bittorrent.com:6881',
           'dht.transmissionbt.com:6881',
           'router.utorrent.com:6881',
-          'dht.aelitis.com:6881'
+          'dht.aelitis.com:6881',
+          'dht.libtorrent.org:25401'
         ]
       },
       webSeeds: true,
