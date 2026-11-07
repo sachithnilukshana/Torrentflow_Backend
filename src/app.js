@@ -19,8 +19,14 @@ const app = express();
 app.set('trust proxy', 1);
 
 // CORS setup
+const envOrigins = (config.frontendOrigin || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 const allowedOrigins = [
-  config.frontendOrigin,
+  ...envOrigins,
+  'https://torrentflowfronteend.vercel.app',
   'http://localhost:5173',
   'http://127.0.0.1:5173'
 ].filter(Boolean);
@@ -30,8 +36,18 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, curl, server-to-server)
       if (!origin) return callback(null, true);
-      if (config.frontendOrigin === '*' || allowedOrigins.includes(origin)) {
-        return callback(null, true);
+      try {
+        const parsed = new URL(origin);
+        if (
+          config.frontendOrigin === '*' ||
+          allowedOrigins.includes(origin) ||
+          parsed.hostname === 'torrentflowfronteend.vercel.app' ||
+          parsed.hostname.endsWith('.vercel.app')
+        ) {
+          return callback(null, true);
+        }
+      } catch {
+        /* invalid origin URL */
       }
       return callback(new Error(`Origin ${origin} not allowed by CORS policy`));
     },

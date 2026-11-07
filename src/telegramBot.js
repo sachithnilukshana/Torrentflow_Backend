@@ -135,7 +135,7 @@ export function formatLiveProgressMessage(t) {
     if (completedUpload) {
       const accessKey = t.accessKey || completedUpload.accessKey || ('TF-' + (t.infoHash || 'MOVIE').slice(0, 10).toUpperCase());
       const uploaderName = t.telegramUser?.displayName || 'Telegram User';
-      const watchUrl = `${config.frontendOrigin.replace(/\/$/, '')}/torrentflowcinema?key=${encodeURIComponent(accessKey)}`;
+      const watchUrl = `${config.frontendOrigin.replace(/\/$/, '')}/cinema?key=${encodeURIComponent(accessKey)}`;
       return (
         `🎉 *Download Completed!*\n\n` +
         `*Movie:* ${escapeMarkdown(t.name)}\n` +
@@ -618,7 +618,7 @@ export async function notifyBackblazeB2Upload(torrent, upload, bot = botInstance
 
   const accessKey = torrent.accessKey || upload.accessKey || ('TF-' + (torrent.infoHash || 'MOVIE').slice(0, 10).toUpperCase());
   const uploaderName = torrent.telegramUser?.displayName || 'Telegram User';
-  const watchUrl = `${config.frontendOrigin.replace(/\/$/, '')}/torrentflowcinema?key=${encodeURIComponent(accessKey)}`;
+  const watchUrl = `${config.frontendOrigin.replace(/\/$/, '')}/cinema?key=${encodeURIComponent(accessKey)}`;
 
   const message =
     `🎉 *Download Completed!*\n\n` +

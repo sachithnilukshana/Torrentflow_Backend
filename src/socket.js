@@ -12,7 +12,25 @@ let ioInstance = null;
 export function initSocketIO(server, getSnapshotCallback) {
   ioInstance = new Server(server, {
     cors: {
-      origin: config.frontendOrigin === '*' ? true : [config.frontendOrigin, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        try {
+          const parsed = new URL(origin);
+          if (
+            config.frontendOrigin === '*' ||
+            origin === config.frontendOrigin ||
+            origin === 'http://localhost:5173' ||
+            origin === 'http://127.0.0.1:5173' ||
+            parsed.hostname === 'torrentflowfronteend.vercel.app' ||
+            parsed.hostname.endsWith('.vercel.app')
+          ) {
+            return callback(null, true);
+          }
+        } catch {
+          /* invalid origin URL */
+        }
+        return callback(new Error('Origin not allowed by Socket.IO CORS'));
+      },
       methods: ['GET', 'POST'],
       credentials: true
     }
