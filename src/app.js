@@ -170,6 +170,8 @@ app.get('/api/public/watch/:accessKey', async (req, res) => {
     } catch (_) {}
   }
 
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+
   return res.json({
     success: true,
     movie: {
@@ -182,7 +184,7 @@ app.get('/api/public/watch/:accessKey', async (req, res) => {
       uploadedAt: movie.createdAt || movie.updatedAt,
       directUrl,
       source: {
-        src: `/api/movies/${encodeURIComponent(movie.id)}/stream?token=${encodeURIComponent(token)}`,
+        src: `${baseUrl}/api/movies/${encodeURIComponent(movie.id)}/stream?token=${encodeURIComponent(token)}`,
         type: 'auto'
       },
       subtitles: Array.isArray(movie.subtitles) ? movie.subtitles : []

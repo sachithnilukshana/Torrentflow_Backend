@@ -646,16 +646,15 @@ export async function notifyBackblazeB2Upload(torrent, upload, bot = botInstance
         tracker.finalized = true;
         notifiedChatIds.add(tracker.chatId);
       } catch (err) {
-        if (err.message?.includes("can't parse entities")) {
-          try {
-            await bot.editMessageText(message.replace(/[*_`]/g, ''), {
-              chat_id: tracker.chatId,
-              message_id: tracker.messageId
-            });
-            tracker.finalized = true;
-            notifiedChatIds.add(tracker.chatId);
-          } catch (_) {}
-        }
+        try {
+          const plain = message.replace(/\\([_*`[\]\\])/g, '$1').replace(/[*_`]/g, '');
+          await bot.editMessageText(plain, {
+            chat_id: tracker.chatId,
+            message_id: tracker.messageId
+          });
+          tracker.finalized = true;
+          notifiedChatIds.add(tracker.chatId);
+        } catch (_) {}
       }
     }
   }
@@ -671,11 +670,12 @@ export async function notifyBackblazeB2Upload(torrent, upload, bot = botInstance
           await bot.sendMessage(userId, message, { parse_mode: 'Markdown' });
           return true;
         } catch (err) {
-          if (err.message?.includes("can't parse entities")) {
-            try {
-              await bot.sendMessage(userId, message.replace(/[*_`]/g, ''));
-              return true;
-            } catch (_) {}
+          try {
+            const plain = message.replace(/\\([_*`[\]\\])/g, '$1').replace(/[*_`]/g, '');
+            await bot.sendMessage(userId, plain);
+            return true;
+          } catch (innerErr) {
+            console.warn(`[Telegram Bot] Delivery fallback notice for ${userId}:`, innerErr.message);
           }
           console.warn(`[Telegram Bot] Backblaze B2 link delivery notice for ${userId}:`, err.code || err.message);
           return false;
