@@ -1,0 +1,46 @@
+name: Deploy Torrentflow Backend to OCI
+
+on:
+  push:
+    branches:
+      - main  # ඔබ කෝඩ් main branch එකට push කරන විට ක්‍රියාත්මක වේ
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Deploy to OCI VM via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.OCI_HOST }}
+        username: ${{ secrets.OCI_USERNAME }}
+        key: ${{ secrets.OCI_KEY }}
+        port: 22
+        script: |
+          # 1. Project එක සඳහා server එකේ folder එකක් සෑදීම සහ එයට ඇතුල් වීම
+          mkdir -p ~/torrentflow-backend && cd ~/torrentflow-backend
+          
+          # 2. Server එක තුළ ප්‍රථම වතාවට නම් repository එක clone කිරීම, නැතහොත් pull කිරීම
+          if [ ! -d ".git" ]; then
+            git clone https://github.com{{ github.repository }}.git .
+          else
+            git pull origin main
+          fi
+          
+          # 3. Environment Variables (අවශ්‍ය නම් .env ෆයිල් එකක් සෑදීමට)
+          # echo "PORT=8080" > .env
+          
+          # 4. 🔴 ඔබේ Backend තාක්ෂණය අනුව මෙතනින් පහළ කොටස වෙනස් කරන්න:
+          
+          # ක්‍රමය A: Node.js (Express/NestJS) සහ PM2 භාවිතා කරන්නේ නම්:
+          # export NVM_DIR="$HOME/.nvm"
+          # [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          # npm install --production
+          # pm2 restart torrentflow-api || pm2 start index.js --name "torrentflow-api"
+          
+          # ක්‍රමය B: Docker සහ Docker Compose භාවිතා කරන්නේ නම්:
+          # docker compose up -d --build
