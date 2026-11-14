@@ -9,6 +9,7 @@ import { broadcast } from './socket.js';
 import { BackblazeB2UploadQueue } from './backblazeB2UploadQueue.js';
 import { registerUploadedMovie, removeMovieByB2FileId } from './movieCatalogue.js';
 import { cleanupExpiredBackblazeB2Files, syncBucketLifecycleRules } from './backblazeB2.js';
+import { getSystemMetrics } from './systemMetrics.js';
 
 // In-memory registry of all torrent tasks (active, queued, completed, error)
 const torrentRegistry = new Map();
@@ -685,7 +686,11 @@ function tick() {
     totalDownloadSpeed: totalDlSpeed,
     totalUploadSpeed: totalUlSpeed,
     activeCount: getActiveCount(),
-    queuedCount: downloadQueue.length
+    queuedCount: downloadQueue.length,
+    system: getSystemMetrics({
+      downloadSpeed: totalDlSpeed,
+      uploadSpeed: totalUlSpeed
+    })
   });
 }
 
@@ -1230,6 +1235,11 @@ export function getSystemStats() {
     if (t.status === 'completed') completedCount++;
   }
 
+  const system = getSystemMetrics({
+    downloadSpeed: totalDlSpeed,
+    uploadSpeed: totalUlSpeed
+  });
+
   return {
     totalTorrents: all.length,
     activeCount,
@@ -1238,7 +1248,8 @@ export function getSystemStats() {
     downloadSpeed: totalDlSpeed,
     uploadSpeed: totalUlSpeed,
     downloadPath: config.downloadPath,
-    maxActiveTorrents: config.maxActiveTorrents
+    maxActiveTorrents: config.maxActiveTorrents,
+    system
   };
 }
 

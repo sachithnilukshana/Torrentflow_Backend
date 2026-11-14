@@ -12,7 +12,15 @@ function load() {
   loaded = true;
   try { movies = fs.existsSync(cataloguePath) ? JSON.parse(fs.readFileSync(cataloguePath, 'utf8')).movies || [] : []; } catch (error) { console.warn('[MovieCatalogue] Could not read catalogue:', error.message); movies = []; }
 }
-function save() { fs.writeFileSync(cataloguePath, JSON.stringify({ version: 1, movies }, null, 2), 'utf8'); }
+function save() {
+  try {
+    const dir = path.dirname(cataloguePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(cataloguePath, JSON.stringify({ version: 1, movies }, null, 2), 'utf8');
+  } catch (error) {
+    console.error('[MovieCatalogue] Could not save catalogue:', error.message);
+  }
+}
 function publicMovie(movie) {
   const { b2FileId, ...safe } = movie;
   return {

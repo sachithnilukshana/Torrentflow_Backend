@@ -3,6 +3,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import config from './config.js';
 import { verifyAdminCredentials, generateToken } from './auth.js';
@@ -13,6 +14,7 @@ import { uploadFileToBackblazeB2, downloadBackblazeB2File, authorize, getAuthori
 import { findMovieByInfoHash, findMovieByAccessKey, getMovie, getPlaybackMovie, listMovies, registerUploadedMovie, updateMovieMetadata } from './movieCatalogue.js';
 import { notifyBackblazeB2Upload } from './telegramBot.js';
 import { broadcast } from './socket.js';
+import { getSystemMetrics } from './systemMetrics.js';
 
 const app = express();
 // Render terminates TLS before forwarding to this Node process.
@@ -212,6 +214,19 @@ app.get('/api/torrents', requireAuth, (req, res) => {
     success: true,
     torrents,
     stats
+  });
+});
+
+// System hardware & resource metrics (CPU, RAM, Disk, Network for Oracle Cloud / Linux / Windows)
+app.get('/api/system/metrics', requireAuth, (_req, res) => {
+  const stats = torrentManager.getSystemStats();
+  const metrics = getSystemMetrics({
+    downloadSpeed: stats.downloadSpeed,
+    uploadSpeed: stats.uploadSpeed
+  });
+  res.json({
+    success: true,
+    metrics
   });
 });
 

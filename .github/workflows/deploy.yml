@@ -26,21 +26,15 @@ jobs:
           
           # 2. Server එක තුළ ප්‍රථම වතාවට නම් repository එක clone කිරීම, නැතහොත් pull කිරීම
           if [ ! -d ".git" ]; then
-            git clone https://github.com{{ github.repository }}.git .
+            git clone https://github.com/${{ github.repository }}.git .
           else
             git pull origin main
           fi
           
-          # 3. Environment Variables (අවශ්‍ය නම් .env ෆයිල් එකක් සෑදීමට)
-          # echo "PORT=8080" > .env
+          # 3. NVM සහ Node.js පරිසරය සක්‍රිය කිරීම
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
           
-          # 4. 🔴 ඔබේ Backend තාක්ෂණය අනුව මෙතනින් පහළ කොටස වෙනස් කරන්න:
-          
-          # ක්‍රමය A: Node.js (Express/NestJS) සහ PM2 භාවිතා කරන්නේ නම්:
-          # export NVM_DIR="$HOME/.nvm"
-          # [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-          # npm install --production
-          # pm2 restart torrentflow-api || pm2 start index.js --name "torrentflow-api"
-          
-          # ක්‍රමය B: Docker සහ Docker Compose භාවිතා කරන්නේ නම්:
-          # docker compose up -d --build
+          # 4. Dependencies ස්ථාපනය කර PM2 මගින් backend ධාවනය කිරීම
+          npm install --production
+          pm2 restart torrentflow-backend || pm2 start src/server.js --name "torrentflow-backend"

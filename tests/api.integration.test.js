@@ -87,6 +87,23 @@ describe('HTTP API End-to-End Integration Tests', () => {
     assert.ok(Array.isArray(data.torrents));
   });
 
+  test('GET /api/system/metrics requires auth and returns CPU, RAM, Disk, and Network metrics', async () => {
+    const unauth = await fetch(`${baseUrl}/api/system/metrics`);
+    assert.equal(unauth.status, 401);
+
+    const authRes = await fetch(`${baseUrl}/api/system/metrics`, {
+      headers: { Authorization: `Bearer ${validToken}` }
+    });
+    assert.equal(authRes.status, 200);
+    const body = await authRes.json();
+    assert.equal(body.success, true);
+    assert.ok(body.metrics);
+    assert.equal(typeof body.metrics.cpu.percent, 'number');
+    assert.equal(typeof body.metrics.memory.total, 'number');
+    assert.equal(typeof body.metrics.disk.percent, 'number');
+    assert.equal(typeof body.metrics.network.downloadSpeed, 'number');
+  });
+
   test('movie catalogue and playback endpoints require authentication', async () => {
     const movies = await fetch(`${baseUrl}/api/movies`);
     assert.equal(movies.status, 401);

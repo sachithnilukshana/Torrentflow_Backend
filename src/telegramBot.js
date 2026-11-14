@@ -344,6 +344,14 @@ function getTelegramUserInfo(msg) {
       reply += `Total: ${stats.totalTorrents} | Active: ${stats.activeCount}/${config.maxActiveTorrents} | Completed: ${stats.completedCount}\n`;
       reply += `⬇ DL: ${formatSpeed(stats.downloadSpeed)} | ⬆ UL: ${formatSpeed(stats.uploadSpeed)}\n\n`;
 
+      if (stats.system) {
+        const sys = stats.system;
+        const cpuStr = `CPU: ${sys.cpu?.percent ?? 0}% (${sys.cpu?.cores ?? 0} cores)`;
+        const ramStr = `RAM: ${formatBytes(sys.memory?.used)} / ${formatBytes(sys.memory?.total)} (${sys.memory?.percent ?? 0}%)`;
+        const diskStr = sys.disk?.total > 0 ? `Disk: ${formatBytes(sys.disk.used)} / ${formatBytes(sys.disk.total)} (${sys.disk.percent}%)` : '';
+        reply += `🖥️ *Server Resources:*\n${cpuStr}\n${ramStr}${diskStr ? '\n' + diskStr : ''}\n\n`;
+      }
+
       if (active.length === 0) {
         reply += `_No active downloads running._`;
       } else {
