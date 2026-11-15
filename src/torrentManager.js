@@ -40,6 +40,7 @@ const backblazeB2UploadCompletionHooks = [];
 // High-performance public BitTorrent & WebRTC trackers to maximize swarm discovery and speed
 export const HIGH_PERFORMANCE_TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.stealth.si:80/announce',
   'udp://open.tracker.cl:1337/announce',
   'udp://opentracker.i2p.rocks:6969/announce',
   'udp://tracker.openbittorrent.com:6969/announce',
@@ -51,6 +52,12 @@ export const HIGH_PERFORMANCE_TRACKERS = [
   'udp://tracker.dler.org:6969/announce',
   'udp://p4p.arenabg.com:1337/announce',
   'udp://movies.zsw.ca:6969/announce',
+  'udp://tracker.tiny-vps.com:6969/announce',
+  'udp://tracker.theoks.net:6969/announce',
+  'udp://tracker.swatech.info:2710/announce',
+  'udp://tracker.bittor.pw:1337/announce',
+  'http://tracker.openbittorrent.com:80/announce',
+  'https://tracker.tamersunion.org:443/announce',
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.webtorrent.dev',
   'wss://tracker.files.fm:7073/announce',
@@ -256,8 +263,10 @@ function startTorrentEngine(task) {
     path: config.temporaryDownloadPath,
     destroyStoreOnDestroy: false,
     announce: mergedAnnounce,
-    maxWebConns: 8,
-    maxConns: config.maxConnections || 500
+    strategy: config.torrentStrategy || 'rarest',
+    maxWebConns: 32,
+    maxConns: config.maxConnections || 1000,
+    storeCacheSlots: config.storeCacheSlots || 128
   };
 
   try {
@@ -661,11 +670,14 @@ export function formatTorrentOutput(task) {
   };
 }
 
+let tickCount = 0;
+
 /**
  * Periodic tick to refresh speeds and broadcast updates.
  */
 function tick() {
   if (torrentRegistry.size === 0) return;
+  tickCount++;
 
   const activeTorrents = [];
   let totalDlSpeed = 0;
@@ -678,6 +690,18 @@ function tick() {
 
     if (task.status === 'downloading' || task.status === 'metadata' || task.status === 'paused') {
       activeTorrents.push(formatted);
+    }
+
+    // Auto-boost every 15s: unchoke wires and prioritize active swarm pieces
+    if (tickCount % 15 === 0 && task.status === 'downloading' && task._engine && !task._engine.destroyed) {
+      const engine = task._engine;
+      if (engine.wires) {
+        for (const wire of engine.wires) {
+          if (typeof wire.unchoke === 'function') {
+            try { wire.unchoke(); } catch (_) {}
+          }
+        }
+      }
     }
   }
 
