@@ -9,10 +9,11 @@ let clientInstance = null;
  */
 export function getWebTorrentClient() {
   if (!clientInstance) {
-    const torrentPort = config.torrentPort || 6881;
-    const dhtPort = config.dhtPort || 6881;
+    const torrentPort = Number(config.torrentPort) > 0 ? Number(config.torrentPort) : 0;
+    // dhtPort MUST be different from torrentPort if specified, otherwise 0 (dynamic)
+    const dhtPort = (Number(config.dhtPort) > 0 && Number(config.dhtPort) !== torrentPort) ? Number(config.dhtPort) : 0;
 
-    clientInstance = new WebTorrent({
+    const clientOpts = {
       torrentPort,
       dhtPort,
       maxConns: config.maxConnections || 1000,
@@ -33,10 +34,25 @@ export function getWebTorrentClient() {
       webSeeds: true,
       downloadLimit: -1,
       uploadLimit: -1
-    });
+    };
+
+    clientInstance = new WebTorrent(clientOpts);
 
     clientInstance.on('error', (err) => {
       console.error('[WebTorrent Engine Error]:', err.message || err);
+      // If a port conflict occurs (EADDRINUSE), automatically rebind to any available port
+      if (err.code === 'EADDRINUSE' && clientOpts.torrentPort > 0) {
+        console.warn(`[WebTorrent] Port ${clientOpts.torrentPort} in use. Rebinding engine to dynamic ports...`);
+        try {
+          clientInstance.destroy(() => {
+            clientInstance = new WebTorrent({
+              ...clientOpts,
+              torrentPort: 0,
+              dhtPort: 0
+            });
+          });
+        } catch (_) {}
+      }
     });
   }
   return clientInstance;
