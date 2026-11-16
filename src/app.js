@@ -324,10 +324,10 @@ app.post('/api/torrents/file', requireAuth, upload.single('torrent'), async (req
 });
 
 // Pause Torrent
-app.post('/api/torrents/:infoHash/pause', requireAuth, (req, res, next) => {
+app.post('/api/torrents/:infoHash/pause', requireAuth, async (req, res, next) => {
   try {
     const { infoHash } = req.params;
-    const updated = torrentManager.pauseTorrent(infoHash);
+    const updated = await torrentManager.pauseTorrent(infoHash);
     res.json({
       success: true,
       message: 'Torrent paused.',
@@ -342,10 +342,10 @@ app.post('/api/torrents/:infoHash/pause', requireAuth, (req, res, next) => {
 });
 
 // Resume Torrent
-app.post('/api/torrents/:infoHash/resume', requireAuth, (req, res, next) => {
+app.post('/api/torrents/:infoHash/resume', requireAuth, async (req, res, next) => {
   try {
     const { infoHash } = req.params;
-    const updated = torrentManager.resumeTorrent(infoHash);
+    const updated = await torrentManager.resumeTorrent(infoHash);
     res.json({
       success: true,
       message: 'Torrent resumed.',
@@ -360,10 +360,10 @@ app.post('/api/torrents/:infoHash/resume', requireAuth, (req, res, next) => {
 });
 
 // Boost Torrent Speed (re-announces to trackers, unchokes wires, maximizes connections)
-app.post('/api/torrents/:infoHash/boost', requireAuth, (req, res, next) => {
+app.post('/api/torrents/:infoHash/boost', requireAuth, async (req, res, next) => {
   try {
     const { infoHash } = req.params;
-    const updated = torrentManager.boostTorrent(infoHash);
+    const updated = await torrentManager.boostTorrent(infoHash);
     res.json({
       success: true,
       message: 'Torrent swarm discovery and download boosted.',

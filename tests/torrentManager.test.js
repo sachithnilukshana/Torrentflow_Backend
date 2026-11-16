@@ -15,6 +15,9 @@ import {
   addTorrentFromMagnet,
   addTorrentFromFile,
   getTorrent,
+  pauseTorrent,
+  resumeTorrent,
+  boostTorrent,
   removeTorrent,
   shutdownTorrentManager
 } from '../src/torrentManager.js';
@@ -130,6 +133,22 @@ describe('TorrentManager registry', () => {
     const t = getTorrent(TEST_INFO_HASH);
     assert.ok(t, 'Expected torrent to be found');
     assert.equal(t.infoHash, TEST_INFO_HASH);
+  });
+
+  test('pauseTorrent pauses a registered torrent', async () => {
+    const paused = await pauseTorrent(TEST_INFO_HASH);
+    assert.equal(paused.status, 'paused');
+  });
+
+  test('resumeTorrent resumes a paused torrent', async () => {
+    const resumed = await resumeTorrent(TEST_INFO_HASH);
+    assert.ok(['queued', 'metadata', 'downloading'].includes(resumed.status));
+  });
+
+  test('boostTorrent boosts an active torrent', async () => {
+    const boosted = await boostTorrent(TEST_INFO_HASH);
+    assert.ok(boosted);
+    assert.equal(boosted.infoHash, TEST_INFO_HASH);
   });
 
   test('removeTorrent removes the entry and returns success', async () => {

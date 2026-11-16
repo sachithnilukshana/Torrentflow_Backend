@@ -157,6 +157,7 @@ export const config = {
   backblazeB2ParallelParts: Math.min(16, Math.max(1, parseInt(process.env.B2_PARALLEL_PARTS || '6', 10))),
   deleteTemporaryFilesAfterUpload: String(process.env.DELETE_TEMP_AFTER_B2_UPLOAD || 'true').toLowerCase() !== 'false',
   b2RetentionDays: parseInt(process.env.B2_RETENTION_DAYS || '2', 10),
+  aria2RpcUrl: process.env.ARIA2_RPC_URL || 'http://127.0.0',
   nodeEnv: process.env.NODE_ENV || 'development'
 };
 

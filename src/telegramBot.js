@@ -446,7 +446,7 @@ function getTelegramUserInfo(msg) {
     });
 
     // /pause <hash>
-    botInstance.onText(/\/pause(?:\s+(.+))?/, (msg, match) => {
+    botInstance.onText(/\/pause(?:\s+(.+))?/, async (msg, match) => {
       if (!checkAuth(msg)) return;
       const hash = match[1]?.trim();
       if (!hash) {
@@ -454,7 +454,7 @@ function getTelegramUserInfo(msg) {
       }
 
       try {
-        const updated = torrentManager.pauseTorrent(hash);
+        const updated = await torrentManager.pauseTorrent(hash);
         botInstance.sendMessage(msg.chat.id, `⏸️ Paused torrent: *${escapeMarkdown(updated.name)}*`, { parse_mode: 'Markdown' });
       } catch (err) {
         botInstance.sendMessage(msg.chat.id, `❌ Error: ${escapeMarkdown(err.message)}`, { parse_mode: 'Markdown' });
@@ -462,7 +462,7 @@ function getTelegramUserInfo(msg) {
     });
 
     // /resume <hash>
-    botInstance.onText(/\/resume(?:\s+(.+))?/, (msg, match) => {
+    botInstance.onText(/\/resume(?:\s+(.+))?/, async (msg, match) => {
       if (!checkAuth(msg)) return;
       const hash = match[1]?.trim();
       if (!hash) {
@@ -470,7 +470,7 @@ function getTelegramUserInfo(msg) {
       }
 
       try {
-        const updated = torrentManager.resumeTorrent(hash);
+        const updated = await torrentManager.resumeTorrent(hash);
         botInstance.sendMessage(msg.chat.id, `▶️ Resumed torrent: *${escapeMarkdown(updated.name)}*`, { parse_mode: 'Markdown' });
       } catch (err) {
         botInstance.sendMessage(msg.chat.id, `❌ Error: ${escapeMarkdown(err.message)}`, { parse_mode: 'Markdown' });
