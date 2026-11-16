@@ -1,40 +1,23 @@
-name: Deploy Torrentflow Backend to OCI
+name: Auto Deploy to Oracle VPS
 
 on:
   push:
     branches:
-      - main  # ඔබ කෝඩ් main branch එකට push කරන විට ක්‍රියාත්මක වේ
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-
-    - name: Deploy to OCI VM via SSH
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.OCI_HOST }}
-        username: ${{ secrets.OCI_USERNAME }}
-        key: ${{ secrets.OCI_KEY }}
-        port: 22
-        script: |
-          # 1. Project එක සඳහා server එකේ folder එකක් සෑදීම සහ එයට ඇතුල් වීම
-          mkdir -p ~/torrentflow-backend && cd ~/torrentflow-backend
-          
-          # 2. Server එක තුළ ප්‍රථම වතාවට නම් repository එක clone කිරීම, නැතහොත් pull කිරීම
-          if [ ! -d ".git" ]; then
-            git clone https://github.com/${{ github.repository }}.git .
-          else
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            export PATH=$PATH:/snap/bin:/usr/local/bin
+            cd ~/Torrentflow_Backend
             git pull origin main
-          fi
-          
-          # 3. NVM සහ Node.js පරිසරය සක්‍රිය කිරීම
-          export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-          
-          # 4. Dependencies ස්ථාපනය කර PM2 මගින් backend ධාවනය කිරීම
-          npm install --production
-          pm2 restart torrentflow-backend || pm2 start src/server.js --name "torrentflow-backend"
+            npm install
+            pm2 restart torrentflow-backend
