@@ -8,7 +8,7 @@ let clientInstance = null;
  * WebTorrent in Node.js supports standard BitTorrent over TCP/uTP as well as WebRTC.
  */
 export function getWebTorrentClient() {
-  if (!clientInstance) {
+  if (!clientInstance || clientInstance.destroyed) {
     const torrentPort = Number(config.torrentPort) > 0 ? Number(config.torrentPort) : 0;
     // dhtPort MUST be different from torrentPort if specified, otherwise 0 (dynamic)
     const dhtPort = (Number(config.dhtPort) > 0 && Number(config.dhtPort) !== torrentPort) ? Number(config.dhtPort) : 0;
@@ -44,14 +44,14 @@ export function getWebTorrentClient() {
       if (err.code === 'EADDRINUSE' && clientOpts.torrentPort > 0) {
         console.warn(`[WebTorrent] Port ${clientOpts.torrentPort} in use. Rebinding engine to dynamic ports...`);
         try {
-          clientInstance.destroy(() => {
-            clientInstance = new WebTorrent({
-              ...clientOpts,
-              torrentPort: 0,
-              dhtPort: 0
-            });
+          const oldClient = clientInstance;
+          clientInstance = null;
+          oldClient.destroy(() => {
+            getWebTorrentClient();
           });
-        } catch (_) {}
+        } catch (_) {
+          clientInstance = null;
+        }
       }
     });
   }

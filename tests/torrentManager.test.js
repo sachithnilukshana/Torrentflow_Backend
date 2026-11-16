@@ -13,10 +13,12 @@ import {
   normalizeInfoHash,
   formatTorrentOutput,
   addTorrentFromMagnet,
+  addTorrentFromFile,
   getTorrent,
   removeTorrent,
   shutdownTorrentManager
 } from '../src/torrentManager.js';
+import createTorrent from 'create-torrent';
 
 const TEST_INFO_HASH = '08ada5a7a6183aae1e09d831df6748d566095a10';
 const TEST_MAGNET    = `magnet:?xt=urn:btih:${TEST_INFO_HASH}&dn=Sintel&tr=udp%3A%2F%2Fexplodie.org%3A6969`;
@@ -134,5 +136,30 @@ describe('TorrentManager registry', () => {
     const res = await removeTorrent(TEST_INFO_HASH, { deleteFiles: false });
     assert.equal(res.success, true);
     assert.equal(getTorrent(TEST_INFO_HASH), null);
+  });
+
+  test('addTorrentFromFile rejects null or invalid buffer', async () => {
+    await assert.rejects(
+      async () => addTorrentFromFile(null),
+      /valid \.torrent file/
+    );
+    await assert.rejects(
+      async () => addTorrentFromFile(Buffer.from('not a torrent')),
+      /Invalid or corrupt/
+    );
+  });
+
+  test('addTorrentFromFile accepts valid torrent file buffer', async () => {
+    const fileBuf = await new Promise((resolve, reject) => {
+      createTorrent(Buffer.from('test sample data'), { name: 'sample.txt' }, (err, buf) => {
+        if (err) return reject(err);
+        resolve(buf);
+      });
+    });
+
+    const res = await addTorrentFromFile(fileBuf, 'sample.torrent');
+    assert.ok(res.infoHash, 'infoHash should be present');
+    assert.equal(res.name, 'sample.txt');
+    await removeTorrent(res.infoHash, { deleteFiles: false });
   });
 });

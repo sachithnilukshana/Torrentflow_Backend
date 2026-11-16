@@ -42,22 +42,14 @@ export const HIGH_PERFORMANCE_TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://open.stealth.si:80/announce',
   'udp://open.tracker.cl:1337/announce',
-  'udp://opentracker.i2p.rocks:6969/announce',
-  'udp://tracker.openbittorrent.com:6969/announce',
-  'udp://explodie.org:6969/announce',
   'udp://tracker.torrent.eu.org:451/announce',
+  'udp://explodie.org:6969/announce',
   'udp://open.demonii.com:1337/announce',
   'udp://tracker.filemail.com:6969/announce',
-  'udp://tracker.moeking.me:6969/announce',
   'udp://tracker.dler.org:6969/announce',
   'udp://p4p.arenabg.com:1337/announce',
   'udp://movies.zsw.ca:6969/announce',
-  'udp://tracker.tiny-vps.com:6969/announce',
   'udp://tracker.theoks.net:6969/announce',
-  'udp://tracker.swatech.info:2710/announce',
-  'udp://tracker.bittor.pw:1337/announce',
-  'http://tracker.openbittorrent.com:80/announce',
-  'https://tracker.tamersunion.org:443/announce',
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.webtorrent.dev',
   'wss://tracker.files.fm:7073/announce',
@@ -253,6 +245,16 @@ function startTorrentEngine(task) {
   const client = getWebTorrentClient();
   task.status = 'metadata';
 
+  // If this torrent is somehow already registered in client engine, remove it first
+  if (task.infoHash && Array.isArray(client.torrents)) {
+    const existingEngine = client.torrents.find((t) => t.infoHash === task.infoHash);
+    if (existingEngine) {
+      try {
+        client.remove(existingEngine, { destroyStore: false });
+      } catch (_) {}
+    }
+  }
+
   const torrentIdentifier = task.rawTorrent || task.magnetUri;
   const taskAnnounce = Array.isArray(task.announce) ? task.announce : [];
   const mergedAnnounce = Array.from(new Set([...taskAnnounce, ...HIGH_PERFORMANCE_TRACKERS]));
@@ -280,11 +282,11 @@ function startTorrentEngine(task) {
       task.infoHash = normalizeInfoHash(wtTorrent.infoHash);
     });
 
-    wtTorrent.on('metadata', () => {
+    const setupTorrentFiles = () => {
       task.name = wtTorrent.name || task.name || 'Unnamed Torrent';
-      task.totalSize = wtTorrent.length || 0;
-      task.status = 'downloading';
-      if (wtTorrent.files) {
+      task.totalSize = wtTorrent.length || task.totalSize || 0;
+      task.status = wtTorrent.done ? 'completed' : 'downloading';
+      if (wtTorrent.files && wtTorrent.files.length > 0) {
         task.files = wtTorrent.files.map((f) => ({
           name: f.name,
           path: f.path,
@@ -296,7 +298,13 @@ function startTorrentEngine(task) {
         });
       }
       broadcastSnapshot();
-    });
+    };
+
+    if (wtTorrent.metadata) {
+      setupTorrentFiles();
+    } else {
+      wtTorrent.on('metadata', setupTorrentFiles);
+    }
 
     wtTorrent.on('error', (err) => {
       console.error(`[Torrent Error] ${task.name || task.infoHash}:`, err.message);
@@ -947,16 +955,21 @@ export function addTorrentFromMagnet(rawMagnetUri, options = {}) {
 }
 
 /**
- * Adds a torrent from a .torrent file Buffer.
+ * Adds a torrent from a .torrent file Buffer or Uint8Array.
  */
 export async function addTorrentFromFile(fileBuffer, originalFilename = 'upload.torrent', options = {}) {
-  if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
+  if (!fileBuffer) {
     throw new Error('A valid .torrent file Buffer is required');
+  }
+
+  const buf = Buffer.isBuffer(fileBuffer) ? fileBuffer : Buffer.from(fileBuffer);
+  if (buf.length === 0) {
+    throw new Error('Uploaded .torrent file is empty (0 bytes).');
   }
 
   let parsed;
   try {
-    parsed = await parseTorrent(fileBuffer);
+    parsed = await parseTorrent(buf);
   } catch (err) {
     throw new Error(`Invalid or corrupt .torrent file: ${err.message}`);
   }
@@ -979,7 +992,7 @@ export async function addTorrentFromFile(fileBuffer, originalFilename = 'upload.
     name: parsed.name || path.basename(originalFilename, '.torrent'),
     magnetUri: parsed.magnetURI || null,
     announce: Array.isArray(parsed.announce) ? parsed.announce : [],
-    rawTorrent: fileBuffer,
+    rawTorrent: buf,
     status: 'queued',
     totalSize: parsed.length || 0,
     downloadedSize: 0,
