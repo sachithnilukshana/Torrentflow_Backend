@@ -4,7 +4,8 @@ import crypto from 'crypto';
 import parseTorrent from 'parse-torrent';
 import magnetURI from 'magnet-uri';
 import config from './config.js';
-import { aria2Rpc, getAria2RpcUrl } from './aria2.js';
+import { aria2Rpc, isAria2Available } from './aria2.js';
+import { getWebTorrentClient, destroyWebTorrentClient } from './webtorrent.js';
 import { broadcast } from './socket.js';
 import { BackblazeB2UploadQueue } from './backblazeB2UploadQueue.js';
 import { registerUploadedMovie, removeMovieByB2FileId } from './movieCatalogue.js';
@@ -239,11 +240,31 @@ function processQueue() {
 }
 
 /**
- * Starts the aria2 download for a registered task.
+ * Starts the download for a registered task using aria2 if available, or WebTorrent as automatic fallback.
  */
 async function startTorrentEngine(task) {
   task.status = 'metadata';
 
+  // Ensure temporary download directory exists
+  if (!fs.existsSync(config.temporaryDownloadPath)) {
+    try {
+      fs.mkdirSync(config.temporaryDownloadPath, { recursive: true });
+    } catch (_) {}
+  }
+
+  const ariaAvailable = await isAria2Available();
+  if (ariaAvailable) {
+    task.engineType = 'aria2';
+    console.log(`[TorrentManager] Starting download for ${task.name || task.infoHash} via aria2c JSON-RPC daemon`);
+    await startAria2Engine(task);
+  } else {
+    task.engineType = 'webtorrent';
+    console.log(`[TorrentManager] Starting download for ${task.name || task.infoHash} via built-in WebTorrent engine`);
+    startWebTorrentEngine(task);
+  }
+}
+
+async function startAria2Engine(task) {
   const trackerList = Array.from(new Set([
     ...(Array.isArray(task.announce) ? task.announce : []),
     ...HIGH_PERFORMANCE_TRACKERS
@@ -274,12 +295,91 @@ async function startTorrentEngine(task) {
     startTaskPolling(task);
     broadcastSnapshot();
   } catch (err) {
-    console.error(`[Torrent Start Error] ${task.infoHash}:`, err.message);
+    console.warn(`[TorrentManager] Notice on aria2c start (${err.message}). Falling back to WebTorrent...`);
+    task.engineType = 'webtorrent';
+    startWebTorrentEngine(task);
+  }
+}
+
+function startWebTorrentEngine(task) {
+  const client = getWebTorrentClient();
+  if (!client) {
     task.status = 'error';
-    task.errorMessage = err.message;
+    task.errorMessage = 'WebTorrent engine could not be initialized.';
     broadcast('torrent:error', formatTorrentOutput(task));
     processQueue();
+    return;
   }
+
+  // If this torrent is somehow already registered in client engine, remove it first
+  if (task.infoHash && Array.isArray(client.torrents)) {
+    const existingEngine = client.torrents.find((t) => t.infoHash === task.infoHash);
+    if (existingEngine) {
+      try {
+        client.remove(existingEngine, { destroyStore: false });
+      } catch (_) {}
+    }
+  }
+
+  const torrentIdentifier = task.rawTorrent || task.magnetUri;
+  const taskAnnounce = Array.isArray(task.announce) ? task.announce : [];
+  const mergedAnnounce = Array.from(new Set([...taskAnnounce, ...HIGH_PERFORMANCE_TRACKERS]));
+
+  client.add(
+    torrentIdentifier,
+    {
+      path: config.temporaryDownloadPath,
+      announce: mergedAnnounce,
+      maxWebConns: 50
+    },
+    (wtTorrent) => {
+      task._engine = wtTorrent;
+      task.infoHash = normalizeInfoHash(wtTorrent.infoHash) || task.infoHash;
+
+      const setupTorrentFiles = () => {
+        task.name = wtTorrent.name || task.name || 'Unnamed Torrent';
+        task.totalSize = wtTorrent.length || task.totalSize || 0;
+        task.status = wtTorrent.done ? 'completed' : 'downloading';
+        if (wtTorrent.files && wtTorrent.files.length > 0) {
+          task.files = wtTorrent.files.map((f) => ({
+            name: f.name,
+            path: f.path,
+            length: f.length
+          }));
+          wtTorrent.files.forEach((f) => {
+            if (typeof f.select === 'function') f.select();
+          });
+        }
+        broadcastSnapshot();
+      };
+
+      if (wtTorrent.metadata) {
+        setupTorrentFiles();
+      } else {
+        wtTorrent.on('metadata', setupTorrentFiles);
+      }
+
+      wtTorrent.on('wire', (wire) => {
+        if (typeof wire.unchoke === 'function') {
+          try { wire.unchoke(); } catch (_) {}
+        }
+      });
+
+      wtTorrent.on('error', (err) => {
+        console.error(`[Torrent Error] ${task.name || task.infoHash}:`, err.message);
+        task.status = 'error';
+        task.errorMessage = err.message;
+        broadcast('torrent:error', formatTorrentOutput(task));
+        processQueue();
+      });
+
+      wtTorrent.on('done', async () => {
+        await onTorrentDone(task, { files: task.files });
+      });
+
+      broadcastSnapshot();
+    }
+  );
 }
 
 /**
@@ -714,6 +814,23 @@ export function formatTorrentOutput(task) {
   let downloadedSize = task.downloadedSize || 0;
   let totalSize = task.totalSize || 0;
 
+  if (task._engine && !task._engine.destroyed) {
+    const e = task._engine;
+    progress = e.progress || 0;
+    downloadSpeed = e.downloadSpeed || 0;
+    uploadSpeed = e.uploadSpeed || 0;
+    peers = e.numPeers || 0;
+    downloadedSize = e.downloaded || 0;
+    totalSize = e.length || totalSize || 0;
+
+    task.downloadSpeed = downloadSpeed;
+    task.uploadSpeed = uploadSpeed;
+    task.peers = peers;
+    task.downloadedSize = downloadedSize;
+    task.totalSize = totalSize;
+    task.progress = progress;
+  }
+
   if (task.status === 'completed') {
     progress = 1;
     downloadSpeed = 0;
@@ -1127,24 +1244,20 @@ export async function pauseTorrent(infoHash) {
     } catch (err) {
       console.warn(`[TorrentManager] Notice pausing aria2 GID ${task.gid}:`, err.message);
     }
-    task.status = 'paused';
-    task.downloadSpeed = 0;
-    task.uploadSpeed = 0;
-    broadcastSnapshot();
-    processQueue();
-    return formatTorrentOutput(task);
   }
 
-  if (task.status === 'downloading' || task.status === 'metadata') {
-    task.status = 'paused';
-    task.downloadSpeed = 0;
-    task.uploadSpeed = 0;
-    broadcastSnapshot();
-    processQueue();
-    return formatTorrentOutput(task);
+  if (task._engine && typeof task._engine.pause === 'function') {
+    try {
+      task._engine.pause();
+    } catch (_) {}
   }
 
-  throw new Error(`Cannot pause torrent in current status: ${task.status}`);
+  task.status = 'paused';
+  task.downloadSpeed = 0;
+  task.uploadSpeed = 0;
+  broadcastSnapshot();
+  processQueue();
+  return formatTorrentOutput(task);
 }
 
 /**
@@ -1176,6 +1289,15 @@ export async function resumeTorrent(infoHash) {
     }
   }
 
+  if (task._engine && typeof task._engine.resume === 'function') {
+    try {
+      task._engine.resume();
+      task.status = 'downloading';
+      broadcastSnapshot();
+      return formatTorrentOutput(task);
+    } catch (_) {}
+  }
+
   // If engine wasn't instantiated or was queued
   task.status = 'queued';
   downloadQueue.push(hash);
@@ -1185,7 +1307,7 @@ export async function resumeTorrent(infoHash) {
 }
 
 /**
- * Boosts download speed by re-applying aggressive connection and tracker options in aria2.
+ * Boosts download speed by re-applying aggressive connection and tracker options in aria2 or WebTorrent.
  */
 export async function boostTorrent(infoHash) {
   const hash = normalizeInfoHash(infoHash);
@@ -1206,6 +1328,29 @@ export async function boostTorrent(infoHash) {
       console.warn(`[TorrentManager] Notice boosting aria2 GID ${task.gid}:`, err.message);
     }
 
+    broadcastSnapshot();
+    return formatTorrentOutput(task);
+  }
+
+  if (task._engine && !task._engine.destroyed) {
+    const engine = task._engine;
+    if (engine.files) {
+      engine.files.forEach((f) => {
+        if (typeof f.select === 'function') f.select();
+      });
+    }
+    if (engine.wires) {
+      engine.wires.forEach((wire) => {
+        if (typeof wire.unchoke === 'function') {
+          try { wire.unchoke(); } catch (_) {}
+        }
+      });
+    }
+    if (engine.discovery && typeof engine.discovery.tracker?.announce === 'function') {
+      try {
+        engine.discovery.tracker.announce();
+      } catch (_) {}
+    }
     broadcastSnapshot();
     return formatTorrentOutput(task);
   }
@@ -1254,6 +1399,23 @@ export async function removeTorrent(infoHash, options = { deleteFiles: false }) 
       await aria2Rpc('aria2.removeDownloadResult', [task.gid]);
     } catch (_) {}
     task.gid = null;
+  }
+
+  // Remove from WebTorrent if active
+  if (task._engine) {
+    const client = getWebTorrentClient();
+    if (client) {
+      try {
+        await new Promise((resolve) => {
+          client.remove(task._engine, { destroyStore: Boolean(options.deleteFiles) }, () => {
+            resolve();
+          });
+        });
+      } catch (removeErr) {
+        console.warn(`[TorrentManager] Notice on removing torrent engine: ${removeErr.message}`);
+      }
+    }
+    task._engine = null;
   }
 
   // If deleteFiles was requested and engine didn't delete them
@@ -1438,6 +1600,8 @@ export async function shutdownTorrentManager() {
   if (metadataLoaded) {
     savePersistedMeta();
   }
+
+  await destroyWebTorrentClient();
 }
 
 export default {
